@@ -56,24 +56,37 @@
   ;; todo rethrow with custom message
   (mapdown/parse markdown))
 
-(defn gen-section-markdown [params]
-  ;; todo
+(defmulti gen-section-markdown (fn [params] (:display params)))
+
+(defmethod gen-section-markdown :default [params]
   (str params))
+
+(def barrier-re #":{10,200}")
+(def block-ticks-re #"(?m)```(?:\w*)")
+(def ticks-re #"`(.*?)`")
+
+(defn strip-format [str]
+  (-> str
+      (s/replace block-ticks-re "")
+      (s/replace ticks-re "$1")))
 
 (defn parse-section [md]
   (->> (mapdown-parse md)
-       (reduce-kv (fn [m' k v]
-                    (assoc m' k (edn/read-string v)))
+       (reduce-kv (fn [m k v]
+                    (->> v
+                         (strip-format)
+                         (edn/read-string)
+                         (assoc m k)))
                   {})
-       gen-section-markdown))
+       (gen-section-markdown)))
 
-;; from https:/gihub.com/magnars/mapdown
-(def eighty-dashes
-  "--------------------------------------------------------------------------------")
-(def eighty-dashes-re (re-pattern eighty-dashes))
+(defn assert-parity [parts]
+  (assert (odd? (count parts)) "Template sections must be delineated by barriers.")
+  parts)
 
 (defn parse-template [md]
-  (->> (s/split md eighty-dashes-re)
+  (->> (s/split md barrier-re)
+       (assert-parity)
        (map-indexed (fn [idx part]
                       (if (odd? idx)
                         (parse-section part)
@@ -82,28 +95,27 @@
 
 
 (comment
-  (parse-section
-   (str
-    eighty-dashes "\n"
-    ":model :some.ns/model\n"
-    ":columns [[:key \"Parameter\"] [:type \"Type\"]]"
-    eighty-dashes
-    ))
-
   (parse-template
    (str
-    "# Header \n"
-    "Lots of text ... \n\n]"
-    eighty-dashes "\n"
-    ":model :some.ns/model\n"
-    ":columns [[:key \"Parameter\"] [:type \"Type\"]]"
-    eighty-dashes "\n"
+    "# Header ... \n"
+    "sit amet ... \n\n"
+    ":::::::::::::::::::: \n"
+    ":display `:attribute-table` \n"
+    ":model :onyx.plugin.kafka/read-messages \n"
+    ":attribute-table/columns [[:key \"Parameter\"] [:type \"Type\"]] \n"
+    ":::::::::::::::::::: \n"
     "## Intermezzo ... \n"
-    eighty-dashes "\n"
-    ":model :some.ns/model2\n"
-    ":columns [[:key \"Parameter\"] [:type \"Type\"]]"
-    eighty-dashes "\n"
-    "## Footer ...."
+    "lorem ipsum \n\n"
+    ":::::::::::::::::::: \n"
+    ":display :entry"
+    ":model :onyx.plugin.kafka/read-messages \n"
+    ":entry/merge \n
+```clojure\n
+{:foo \"bar\" \n
+ :baz :quux}\n
+```\n
+    :::::::::::::::::::: \n"
+    "## Footer ..."
     ))
 )
 
