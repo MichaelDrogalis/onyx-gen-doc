@@ -28,6 +28,9 @@
   (binding [pprint/*print-right-margin* (or width 20)]
     (format-md :clojure edn)))
 
+(defn format-comment [message]
+  (str "\n[//]: # (" message ")"))
+
 (defn format-table-cell [v [_ _ format :as col-info]]
   (let [format' (cond
                   (nil? v) nil
@@ -45,7 +48,7 @@
               (cycle col-infos)))
        model))
 
-(defn gen-table-markdown [model col-infos table-width]
+(defn gen-table [model col-infos table-width]
   (binding [table.width/*width* (delay table-width)] 
     (let [header (map second col-infos)
           body (table-body model col-infos)]  
@@ -53,13 +56,8 @@
                        :style :github-markdown))))
 
 (defn mapdown-parse [markdown]
-  ;; todo rethrow with custom message
+  ;; todo rethrow ex with custom message
   (mapdown/parse markdown))
-
-(defmulti gen-section-markdown (fn [params] (:display params)))
-
-(defmethod gen-section-markdown :default [params]
-  (str params))
 
 (def barrier-re #":{10,200}")
 (def block-ticks-re #"(?m)```(?:\w*)")
@@ -70,7 +68,39 @@
       (s/replace block-ticks-re "")
       (s/replace ticks-re "$1")))
 
-(defn parse-section [md]
+(defn catalog-entry [information-model key]
+  (get-in information-model [:catalog-entry key :model]))
+
+(defn lifecycle-entry [information-model key]
+  (get-in information-model [:lifecycle-entry key :model]))
+
+(defn display-order [information-model key]
+  (get-in information-model [:display-order key]))
+
+(defmulti gen-section (fn [config params]
+                        (:display params)))
+
+(defrecord Section [config params]
+  Object
+  (toString [_]
+    (try
+      (let [out-md (gen-section config params)]
+        (if (:verbose? config)
+          (str (format-comment params) "\n" out-md)
+          out-md))
+      (catch Throwable ex
+        (str "<!-- PARSE ERROR: " (.getMessage ex) "\n"
+             (with-out-str (pprint/pprint (ex-data ex)))
+             "-->")))))
+
+(defmethod gen-section :default
+  [_ params]
+  (throw (ex-info "Unhandled :display type" {:params params})))
+
+(defmethod gen-section :attribute-table
+  [config {:keys [model columns]}])
+
+(defn parse-section [config md]
   (->> (mapdown-parse md)
        (reduce-kv (fn [m k v]
                     (->> v
@@ -78,43 +108,45 @@
                          (edn/read-string)
                          (assoc m k)))
                   {})
-       (gen-section-markdown)))
+       ((partial ->Section config))))
 
-(defn assert-parity [parts]
-  (assert (odd? (count parts)) "Template sections must be delineated by barriers.")
-  parts)
+(defn assert-parity [md-parts]
+  (assert (odd? (count md-parts)) "Template sections must be delineated by :::::::::: at top and bottom")
+  md-parts)
 
-(defn parse-template [md]
+(defn parse-template [config md]
   (->> (s/split md barrier-re)
        (assert-parity)
-       (map-indexed (fn [idx part]
+       (map-indexed (fn [idx md-part]
                       (if (odd? idx)
-                        (parse-section part)
-                        part)))
-       (s/join)))
+                        (parse-section config md-part)
+                        md-part)))))
 
+(defn gen-template [config md]
+  (s/join (parse-template config md)))
 
 (comment
-  (parse-template
+  (gen-template
+   {}
    (str
     "# Header ... \n"
     "sit amet ... \n\n"
     ":::::::::::::::::::: \n"
     ":display `:attribute-table` \n"
     ":model :onyx.plugin.kafka/read-messages \n"
-    ":attribute-table/columns [[:key \"Parameter\"] [:type \"Type\"]] \n"
-    ":::::::::::::::::::: \n"
+    ":columns [[:key \"Parameter\"] [:type \"Type\"]] \n"
+    ":::::::::::::::::::: \n\n"
     "## Intermezzo ... \n"
     "lorem ipsum \n\n"
     ":::::::::::::::::::: \n"
-    ":display :entry"
+    ":display :catalog-entry \n"
     ":model :onyx.plugin.kafka/read-messages \n"
-    ":entry/merge \n
+    ":defaults \n
 ```clojure\n
 {:foo \"bar\" \n
  :baz :quux}\n
-```\n
-    :::::::::::::::::::: \n"
+```\n"
+    ":::::::::::::::::::: \n\n"
     "## Footer ..."
     ))
 )
