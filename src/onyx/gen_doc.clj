@@ -87,7 +87,7 @@
       (let [out-md (gen-section config params)]
         (if (:verbose? config)
           (str (format-comment params) "\n" out-md)
-          out-md))
+          (or out-md "")))
       (catch Throwable ex
         (str "<!-- PARSE ERROR: " (.getMessage ex) "\n"
              (with-out-str (pprint/pprint (ex-data ex)))
@@ -100,6 +100,14 @@
 (defmethod gen-section :attribute-table
   [config {:keys [model columns]}])
 
+(defmethod gen-section :header
+  [{:keys [verbose? information-model]}
+   {:keys [valid-structure? all-params]}]
+  (assert valid-structure? "Template sections must be delineated by :::::::::: at top and bottom")
+  (when verbose?
+    ;; todo: set difference of the info-model catalog/lifecycle keys vs. markdown sections
+    ))
+
 (defn parse-section [config md]
   (->> (mapdown-parse md)
        (reduce-kv (fn [m k v]
@@ -110,17 +118,18 @@
                   {})
        ((partial ->Section config))))
 
-(defn assert-parity [md-parts]
-  (assert (odd? (count md-parts)) "Template sections must be delineated by :::::::::: at top and bottom")
-  md-parts)
-
 (defn parse-template [config md]
-  (->> (s/split md barrier-re)
-       (assert-parity)
-       (map-indexed (fn [idx md-part]
-                      (if (odd? idx)
-                        (parse-section config md-part)
-                        md-part)))))
+  (let [md-parts (s/split md barrier-re)
+        valid-structure? (odd? (count md-parts))        
+        body (map-indexed (fn [idx md-part]
+                            (if (and valid-structure? (odd? idx))
+                              (parse-section config md-part)
+                              md-part))
+                          md-parts)
+        header (->Section config {:display :header
+                                  :valid-structure? valid-structure?
+                                  :all-params (keep :params body)})]
+    (into [header] body)))
 
 (defn gen-template [config md]
   (s/join (parse-template config md)))
@@ -150,6 +159,3 @@
     "## Footer ..."
     ))
 )
-
-
-
