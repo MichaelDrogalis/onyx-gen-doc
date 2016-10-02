@@ -25,7 +25,7 @@
     v))
 
 (defn format-edn [edn & [width]]
-  (binding [pprint/*print-right-margin* (or width 40)]
+  (binding [pprint/*print-right-margin* (or width 80)]
     (format-md :clojure edn)))
 
 (defn format-comment [message]
@@ -116,24 +116,27 @@
         _ (assert columns' ":columns must be a vector of column specs or a keyword specifying a config preset.")]
     (gen-table entry columns' width)))
 
+(defn ignore-value? [v]
+  (identical? :gen-doc-ignore v))
+
 (defn infer-catalog-entry-values [catalog-entry merge-additions]
   (reduce-kv
    (fn [m k {:keys [default type optional? choices deprecation-version doc]}]
-     (when (or deprecation-version
-               (identical? :gen-doc-ignore (k merge-additions)))
-       m)
-     (let [default' (or default (first choices))]
-       (if default'
-         (assoc m k default')
-         (case type
-           :boolean (assoc m k false)
-           :string (when-not optional?
-                     (assoc m k doc))
-           (:long :map) (when-not optional?
-                          (assoc m k :gen-doc-please-handle-in-merge-additions))
-           :keyword (when-not optional?
-                      (assoc m k (keyword (str "my.ns/" (name k)))))
-           m))))
+     (if (or deprecation-version
+             (ignore-value? (k merge-additions)))
+       m
+       (let [default' (or default (first choices))]
+         (if (not (nil? default'))
+           (assoc m k default')
+           (let [v (case type
+                     :boolean false
+                     :string doc
+                     (:long :map) :gen-doc-please-handle-in-merge-additions
+                     :keyword (keyword (str "my.ns/" (name k)))
+                     ::unmatched)]
+             (if-not (identical? v ::unmatched)
+               (assoc m k v)
+               m))))))
    {}
    catalog-entry))
 
@@ -142,7 +145,9 @@
    {:keys [model merge-additions width]}]
   (let [entry (-> (catalog-entry information-model model)
                   (infer-catalog-entry-values merge-additions)
-                  (merge merge-additions))
+                  (merge (->> merge-additions
+                              (remove (fn [[_ v]] (ignore-value? v)))
+                              (into {}))))
         sorted (sorted-map-by (display-order-comparator information-model model))]
     (format-edn (into sorted entry) width)))
 
@@ -218,7 +223,7 @@
     ":merge-additions \n
 ```clojure\n
 {:onyx/name :read \n
- :foo \"buz\" \n
+ :foo :gen-doc-ignore \n
  :extra true \n
  :onyx/secondary-key 100}\n
 ```\n"
