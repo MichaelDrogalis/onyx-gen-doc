@@ -163,11 +163,12 @@
         valid-structure? (odd? (count md-parts))
         body (map-indexed
               (fn [idx md-part]
-                (if-let [template-md
-                         (and valid-structure?
-                              (odd? idx)
-                              (second (s/split md-part onyx-gen-doc-re)))]
-                  (->Section config (edn/read-string template-md))
+                (if (and valid-structure?
+                         (odd? idx))
+                  (if-let [template-md
+                           (second (s/split md-part onyx-gen-doc-re))]
+                    (->Section config (edn/read-string template-md))
+                    (str "```" md-part "```"))
                   md-part))
               md-parts)
         header (->Section config {:display :header
@@ -204,6 +205,9 @@
     "``` \n\n"
     "## Intermezzo ... \n"
     "lorem ipsum \n\n"
+    "```clojure\n"
+    "{:foo true}\n"
+    "```\n"
     "```onyx-gen-doc \n"
     "{:display :catalog-entry \n"
     " :model :aplugin/read \n"
