@@ -2,7 +2,6 @@
   (:require [clojure.edn :as edn]
             [clojure.pprint :as pprint]
             [clojure.string :as s]
-            [mapdown.core :as mapdown]
             [table.core :as table]
             [table.width]))
 
@@ -54,15 +53,6 @@
           body (table-body model col-infos)]  
       (table/table-str (into [header] body)
                        :style :github-markdown))))
-
-(def barrier-re #":{10,200}")
-(def block-ticks-re #"(?m)```(?:\w*)")
-(def ticks-re #"`(.*?)`")
-
-(defn strip-format [str]
-  (-> str
-      (s/replace block-ticks-re "")
-      (s/replace ticks-re "$1")))
 
 (defn catalog-entry [information-model key]
   (let [entry (get-in information-model [:catalog-entry key :model])]
@@ -165,24 +155,21 @@
     ;; todo: set difference of the info-model catalog/lifecycle keys vs. markdown sections
     ))
 
-(defn parse-section [config md]
-  (->> (mapdown/parse md)
-       (reduce-kv (fn [m k v]
-                    (->> v
-                         (strip-format)
-                         (edn/read-string)
-                         (assoc m k)))
-                  {})
-       ((partial ->Section config))))
+(def code-block-re #"```")
+(def onyx-gen-doc-re #"onyx-gen-doc")
 
 (defn parse-template [config md]
-  (let [md-parts (s/split md barrier-re)
-        valid-structure? (odd? (count md-parts))        
-        body (map-indexed (fn [idx md-part]
-                            (if (and valid-structure? (odd? idx))
-                              (parse-section config md-part)
-                              md-part))
-                          md-parts)
+  (let [md-parts (s/split md code-block-re)
+        valid-structure? (odd? (count md-parts))
+        body (map-indexed
+              (fn [idx md-part]
+                (if-let [template-md
+                         (and valid-structure?
+                              (odd? idx)
+                              (second (s/split md-part onyx-gen-doc-re)))]
+                  (->Section config (edn/read-string template-md))
+                  md-part))
+              md-parts)
         header (->Section config {:display :header
                                   :valid-structure? valid-structure?
                                   :all-params (keep :params body)})]
@@ -210,24 +197,22 @@
    (str
     "# Header ... \n"
     "sit amet ... \n\n"
-    ":::::::::::::::::::: \n"
-    ":display `:attribute-table` \n\n"
-    ":model :aplugin/read \n"
-    ":columns [[:key \"Parameter\"] [:type \"Type\"]] \n"
-    ":::::::::::::::::::: \n\n"
+    "```onyx-gen-doc \n"
+    "{:display :attribute-table \n\n"
+    " :model :aplugin/read \n"
+    " :columns [[:key \"Parameter\"] [:type \"Type\"]]} \n"
+    "``` \n\n"
     "## Intermezzo ... \n"
     "lorem ipsum \n\n"
-    ":::::::::::::::::::: \n"
-    ":display :catalog-entry \n"
-    ":model :aplugin/read \n"
-    ":merge-additions \n
-```clojure\n
+    "```onyx-gen-doc \n"
+    "{:display :catalog-entry \n"
+    " :model :aplugin/read \n"
+    " :merge-additions \n
 {:onyx/name :read \n
  :foo :gen-doc-ignore \n
  :extra true \n
- :onyx/secondary-key 100}\n
+ :onyx/secondary-key 100}}\n
 ```\n"
-    ":::::::::::::::::::: \n\n"
     "## Footer ..."
     ))
 )

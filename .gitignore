@@ -2,3 +2,4 @@
 pom.xml
 /core/target
 /plugin/target
+.nrepl-port
