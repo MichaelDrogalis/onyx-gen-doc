@@ -132,7 +132,7 @@
            (:long :map) (when-not optional?
                           (assoc m k :gen-doc-please-handle-in-merge-additions))
            :keyword (when-not optional?
-                      (assoc m k (keyword (str "my-" (name k)))))
+                      (assoc m k (keyword (str "my.ns/" (name k)))))
            m))))
    {}
    catalog-entry))
@@ -185,6 +185,11 @@
 
 (defn gen-template [config md]
   (s/join (parse-template config md)))
+
+(defn run [{:keys [in-path out-path] :as config}]
+  (let [in-md (slurp in-path)
+        out-md (gen-template config in-md)]
+    (spit out-path out-md)))
 
 (comment
   (gen-template
