@@ -1,2 +1,4 @@
 /.nrepl-port
-/target
+pom.xml
+/core/target
+/plugin/target
