@@ -54,6 +54,11 @@
       (table/table-str (into [header] body)
                        :style :github-markdown))))
 
+(defn summary [information-model key]
+  (let [entry (get-in information-model [:catalog-entry key :summary])]
+    (assert entry ":model keyword must specify a catalog-entry in the information model.")
+    entry))
+
 (defn catalog-entry [information-model key]
   (let [entry (get-in information-model [:catalog-entry key :model])]
     (assert entry ":model keyword must specify a catalog-entry in the information model.")
@@ -93,6 +98,15 @@
 (defmethod gen-section :default
   [_ params]
   (throw (ex-info "Unhandled :display type" {:params params})))
+
+(defmethod gen-section :summary
+  [{:keys [information-model]}
+   {:keys [model format format-string]
+    :or {format-string "%s"}}]
+  (->> model
+       (summary information-model)
+       (clojure.core/format format-string)
+       (format-md format)))
 
 (defmethod gen-section :attribute-table
   [{:keys [information-model presets]}
@@ -190,7 +204,8 @@
     :information-model
     {:catalog-entry
      {:aplugin/read
-      {:model {:foo {:doc "foo" :type :string :default "bar"}
+      {:summary "reads"
+       :model {:foo {:doc "foo" :type :string :default "bar"}
                :baz {:doc "" :type :map }}}}
      :display-order
      {:aplugin/read
@@ -198,6 +213,10 @@
    (str
     "# Header ... \n"
     "sit amet ... \n\n"
+    "```onyx-gen-doc \n"
+    "{:display :summary\n"
+    " :model :aplugin/read :format :h3 :format-string \"This does %s.\"} \n"
+    "``` \n\n"
     "```onyx-gen-doc \n"
     "{:display :attribute-table \n\n"
     " :model :aplugin/read \n"
