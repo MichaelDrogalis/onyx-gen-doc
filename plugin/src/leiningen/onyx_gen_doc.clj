@@ -6,7 +6,7 @@
 
 (def onyx-gen-doc-profile
   {:onyx-gen-doc
-   {:presets {:columns/default [[:key "Parameter"]
+   {:presets {:columns/default [[:key "Key"]
                                 [:type "Type"]
                                 [:optional? "Optional?" :code]
                                 [:default "Default" :code]
@@ -19,9 +19,10 @@
         project (project/merge-profiles project [profile])
         {:keys [information-model in-path out-path] :as config} (:onyx-gen-doc project)
         im-ns (-> information-model namespace symbol)]
-    (main/info (format "Parsing %s into %s" in-path out-path))
+    (main/info (format "Parsing %s into %s ..." in-path out-path))
     (eval/eval-in-project project
                           `(onyx.gen-doc/run ~config)
                           `(do (require '~im-ns)
-                               (require 'onyx.gen-doc))))
+                               (require 'onyx.gen-doc)))
+    (main/info "Complete."))
   )
