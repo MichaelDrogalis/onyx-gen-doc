@@ -14,13 +14,21 @@
     :h4 (str "#### " v)
     :h5 (str "##### " v)
     :h6 (str "###### " v)
+    (:em :italic) (str "*" v "*")
+    (:strong :bold) (str "**" v "**")
     :code (str "`" v "`")
     :clojure (str "```clojure\n"
                   (with-out-str
                     (pprint/pprint v))
                   "```")
-    (:em :italic) (str "*" v "*")
-    (:strong :bold) (str "**" v "**")
+    :template-source (str "```clojure\n    ```onyx-gen-doc\n"
+                          (->> (binding [pprint/*print-right-margin* 50]
+                                 (with-out-str
+                                   (pprint/pprint v)))
+                               (s/split-lines)
+                               (map #(str "    " %))
+                               (s/join "\n"))
+                          "\n    ```\n```")
     v))
 
 (defn format-edn [edn & [width]]
@@ -28,7 +36,7 @@
     (format-md :clojure edn)))
 
 (defn format-comment [message]
-  (str "\n[//]: # (" message ")"))
+  (str "[//]: # (" message ")"))
 
 (defn format-table-cell [v [_ _ format :as col-info]]
   (let [format' (cond
@@ -81,19 +89,24 @@
 (defmulti gen-section (fn [config params]
                         (:display params)))
 
-(defrecord Section [config params]
+(defn section-error [ex config params]
+  (when (:throw? config) (throw ex))
+  (str "<!-- PARSE ERROR: " (.getMessage ex) "\n"
+       (with-out-str (pprint/pprint (or (ex-data ex) params)))
+       "-->"))
+
+(defrecord Section [config params parse-error]
   Object
   (toString [_]
-    (try
-      (let [out-md (gen-section config params)]
-        (if (:verbose? config)
-          (str (format-comment params) "\n" out-md)
-          (or out-md "")))
-      (catch Throwable ex
-        (when (:throw? config) (throw ex))
-        (str "<!-- PARSE ERROR: " (.getMessage ex) "\n"
-             (with-out-str (pprint/pprint (or (ex-data ex) params)))
-             "-->")))))
+    (if parse-error
+      (section-error parse-error config params)
+      (try
+        (let [out-md (gen-section config params)]
+          (if (:verbose? config)
+            (str (format-comment params) "\n" out-md)
+            (or out-md "")))
+        (catch Throwable ex
+          (section-error ex config params))))))
 
 (defmethod gen-section :default
   [_ params]
@@ -114,14 +127,15 @@
   (let [entry (-> (display-order-comparator information-model model)
                   (sorted-map-by)
                   (into (catalog-entry information-model model)))
-        columns' (if (keyword? columns)
-                   (get presets columns)
-                   columns)
+        columns' (cond
+                   (nil? columns) (get presets :columns/default)
+                   (keyword? columns) (get presets columns)
+                   :default columns)
         _ (assert columns' ":columns must be a vector of column specs or a keyword specifying a config preset.")]
     (gen-table entry columns' width)))
 
 (defn ignore-value? [v]
-  (identical? :gen-doc-ignore v))
+  (identical? ::ignore v))
 
 (defn infer-catalog-entry-values [catalog-entry merge-additions]
   (reduce-kv
@@ -132,28 +146,30 @@
        (let [default' (or default (first choices))]
          (if (not (nil? default'))
            (assoc m k default')
-           (let [v (case type
-                     :boolean false
-                     :string doc
-                     (:long :map) :gen-doc-please-handle-in-merge-additions
-                     :keyword (keyword (str "my.ns/" (name k)))
-                     ::unmatched)]
-             (if-not (identical? v ::unmatched)
-               (assoc m k v)
-               m))))))
+           (assoc m k (case type
+                        :boolean false
+                        :string doc
+                        :keyword (keyword (str "my.ns/" (name k)))
+                        :symbol (symbol (str "my.ns/" (name k)))
+                        ::please-handle-in-merge-additions))))))
    {}
    catalog-entry))
 
 (defmethod gen-section :catalog-entry
   [{:keys [information-model]}
-   {:keys [model merge-additions width]}]
-  (let [entry (-> (catalog-entry information-model model)
+   {:keys [model merge-additions width view-source?]}]
+  (let [ entry (-> (catalog-entry information-model model)
                   (infer-catalog-entry-values merge-additions)
-                  (merge (->> merge-additions
+                  (merge (->> (when-not view-source? merge-additions)
                               (remove (fn [[_ v]] (ignore-value? v)))
                               (into {}))))
-        sorted (sorted-map-by (display-order-comparator information-model model))]
-    (format-edn (into sorted entry) width)))
+        sorted (sorted-map-by (display-order-comparator information-model model))
+        entry' (into sorted entry)]
+    (if view-source?
+      (format-md :template-source (if merge-additions
+                                    (assoc entry' :merge-additions merge-additions)
+                                    entry'))
+      (format-edn entry' width))))
 
 (defmethod gen-section :lifecycle-entry
   [{:keys [information-model]}
@@ -164,13 +180,13 @@
 (defmethod gen-section :header
   [{:keys [verbose? information-model]}
    {:keys [valid-structure? all-params]}]
-  (assert valid-structure? "Template sections must be delineated by :::::::::: at top and bottom.")
+  (assert valid-structure? "Template sections must be wrapped with ```onyx-doc-gen ... ```")
   (when verbose?
     ;; todo: set difference of the info-model catalog/lifecycle keys vs. markdown sections
     ))
 
 (def code-block-re #"```")
-(def onyx-gen-doc-re #"onyx-gen-doc")
+(def onyx-gen-doc-re #"onyx-gen-doc(?=\s+\{)")
 
 (defn parse-template [config md]
   (let [md-parts (s/split md code-block-re)
@@ -181,13 +197,20 @@
                          (odd? idx))
                   (if-let [template-md
                            (second (s/split md-part onyx-gen-doc-re))]
-                    (->Section config (edn/read-string template-md))
+                    (try
+                      (->Section config (edn/read-string template-md) nil)
+                      (catch Throwable ex
+                        ( ->Section config nil (ex-info "Error reading edn."
+                                                        {:input template-md
+                                                         :error-message (.getMessage ex)}))))
                     (str "```" md-part "```"))
                   md-part))
               md-parts)
-        header (->Section config {:display :header
-                                  :valid-structure? valid-structure?
-                                  :all-params (keep :params body)})]
+        header (->Section config
+                          {:display :header
+                           :valid-structure? valid-structure?
+                           :all-params (keep :params body)}
+                          nil)]
     (into [header] body)))
 
 (defn gen-template [config md]
@@ -206,7 +229,8 @@
      {:aplugin/read
       {:summary "reads"
        :model {:foo {:doc "foo" :type :string :default "bar"}
-               :baz {:doc "" :type :map }}}}
+               :baz {:doc "" :type :map }
+               :quux {:doc "" :type :symbol}}}}
      :display-order
      {:aplugin/read
       [:baz :foo]}}}
@@ -225,14 +249,15 @@
     "## Intermezzo ... \n"
     "lorem ipsum \n\n"
     "```clojure\n"
-    "{:foo true}\n"
+    "[org.onyxplatform/onyx-gen-doc \"0.0.0\"]\n"
     "```\n"
     "```onyx-gen-doc \n"
     "{:display :catalog-entry \n"
     " :model :aplugin/read \n"
+    " :view-source? true"
     " :merge-additions \n
 {:onyx/name :read \n
- :foo :gen-doc-ignore \n
+ :foo :onyx.gen-doc/ignore \n
  :extra true \n
  :onyx/secondary-key 100}}\n
 ```\n"
