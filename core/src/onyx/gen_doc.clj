@@ -158,17 +158,25 @@
 (defmethod gen-section :catalog-entry
   [{:keys [information-model]}
    {:keys [model merge-additions width view-source?]}]
-  (let [ entry (-> (catalog-entry information-model model)
+  (let [entry (catalog-entry information-model model)
+        entry (-> entry
                   (infer-catalog-entry-values merge-additions)
-                  (merge (->> (when-not view-source? merge-additions)
+                  (merge (->> (if view-source?
+                                (select-keys merge-additions (keys entry))
+                                merge-additions)
                               (remove (fn [[_ v]] (ignore-value? v)))
                               (into {}))))
         sorted (sorted-map-by (display-order-comparator information-model model))
         entry' (into sorted entry)]
     (if view-source?
-      (format-md :template-source (if merge-additions
-                                    (assoc entry' :merge-additions merge-additions)
-                                    entry'))
+      (let [merge-additions' (->> merge-additions
+                                  (remove (fn [[k _]]
+                                            (some #{k} (keys entry))))
+                                  (into {}))]
+        (format-md :template-source
+                   (if (seq merge-additions')
+                     (assoc entry' :merge-additions merge-additions')
+                     entry')))
       (format-edn entry' width))))
 
 (defmethod gen-section :lifecycle-entry

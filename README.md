@@ -72,9 +72,7 @@ This readme is itself generated from templates. Compare the raw source of README
     {:display :summary,
      :model :my.ns/model,
      :format :plain,
-     :format-string "%s",
-     :merge-additions
-     {:format-string "The summary: %s"}}
+     :format-string "The summary: %s"}
     ```
 ```
 
