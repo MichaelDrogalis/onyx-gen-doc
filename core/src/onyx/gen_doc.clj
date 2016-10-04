@@ -1,5 +1,6 @@
 (ns onyx.gen-doc
   (:require [clojure.edn :as edn]
+            [clojure.set :as set]
             [clojure.pprint :as pprint]
             [clojure.string :as s]
             [table.core :as table]
@@ -185,13 +186,36 @@
   (let [entry (lifecycle-entry information-model model)]
     (format-edn entry width)))
 
+(defn missing-keys [entries rendered-params valid-displays]
+  (->> rendered-params
+       (filter #(valid-displays (:display %)))
+       (map :model)
+       (set)
+       (set/difference (set (keys entries)))))
+
 (defmethod gen-section :header
   [{:keys [verbose? information-model]}
-   {:keys [valid-structure? all-params]}]
+   {:keys [valid-structure? rendered-params]}]
   (assert valid-structure? "Template sections must be wrapped with ```onyx-doc-gen ... ```")
   (when verbose?
-    ;; todo: set difference of the info-model catalog/lifecycle keys vs. markdown sections
-    ))
+    (let [missing-catalog-keys
+          (missing-keys (:catalog-entry information-model)
+                        rendered-params
+                        #{:attribute-table :catalog-entry})
+          missing-lifecycle-keys
+          (missing-keys (:lifecycle-entry information-model)
+                        rendered-params
+                        #{:lifecycle-entry})]
+      (str (->> [["catalog" missing-catalog-keys]
+                 ["lifecycle" missing-lifecycle-keys]]
+                (map (fn [[label missing]]
+                       (if (seq missing)
+                         (str "✘ Missing documentation for " label " entries: "
+                              (s/join ", " missing) ".")
+                         (str "✔ All " label " entries documented."))))
+                (map format-comment)
+                (s/join "\n"))
+           "\n"))))
 
 (def code-block-re #"```")
 (def onyx-gen-doc-re #"onyx-gen-doc(?=\s+\{)")
@@ -217,7 +241,7 @@
         header (->Section config
                           {:display :header
                            :valid-structure? valid-structure?
-                           :all-params (keep :params body)}
+                           :rendered-params (keep :params body)}
                           nil)]
     (into [header] body)))
 
@@ -232,9 +256,12 @@
 (comment
   (gen-template
    {:throw? true
+    :verbose? true
     :information-model
     {:catalog-entry
-     {:aplugin/read
+     {:aplugin/write {:model {}}
+      :aplugin/delete {}
+      :aplugin/read
       {:summary "reads"
        :model {:foo {:doc "foo" :type :string :default "bar"}
                :baz {:doc "" :type :map }
@@ -261,7 +288,7 @@
     "```\n"
     "```onyx-gen-doc \n"
     "{:display :catalog-entry \n"
-    " :model :aplugin/read \n"
+    " :model :aplugin/write \n"
     " :view-source? true"
     " :merge-additions \n
 {:onyx/name :read \n
